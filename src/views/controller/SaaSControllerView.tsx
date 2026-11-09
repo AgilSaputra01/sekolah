@@ -23,6 +23,8 @@ import {
   Users,
   FileText,
   Printer,
+  Download,
+  XCircle,
 } from 'lucide-react';
 import { useSaaS } from '../../context/SaaSContext';
 import { useTenantAuth } from '../../context/TenantAuthContext';
@@ -30,6 +32,7 @@ import { useToast } from '../../context/ToastContext';
 import { StatCard, Card } from '../../components/common/Card';
 import { Button } from '../../components/common/Button';
 import { Modal, ConfirmModal } from '../../components/common/Modal';
+import { exportToCSV } from '../../utils/exportUtils';
 import {
   SaaSPlan,
   SaaSProduct,
@@ -82,12 +85,20 @@ export const SaaSControllerView: React.FC = () => {
     students,
     switchSchool,
     deleteSchool,
+    updateSchool,
   } = useTenantAuth();
 
   const { success, error: toastError } = useToast();
 
   const [activeTab, setActiveTab] = useState<ControllerTab>('overview');
   const [searchTerm, setSearchTerm] = useState('');
+
+  // School filtering & editing state
+  const [schoolStatusFilter, setSchoolStatusFilter] = useState<string>('all');
+  const [schoolLevelFilter, setSchoolLevelFilter] = useState<string>('all');
+  const [editingSchool, setEditingSchool] = useState<School | null>(null);
+  const [showEditSchoolModal, setShowEditSchoolModal] = useState(false);
+  const [schoolForm, setSchoolForm] = useState<Partial<School>>({});
 
   // Modals state
   const [selectedSchool, setSelectedSchool] = useState<School | null>(null);
@@ -194,6 +205,37 @@ export const SaaSControllerView: React.FC = () => {
       setShowSchoolDetailModal(false);
       success('Sekolah Dihapus', `Data tenant ${selectedSchool.name} berhasil dihapus.`);
     }
+  };
+
+  // Open Edit School Modal
+  const handleOpenEditSchool = (sch: School) => {
+    setEditingSchool(sch);
+    setSchoolForm({
+      name: sch.name,
+      npsn: sch.npsn,
+      level: sch.level,
+      status: sch.status,
+      subdomain: sch.subdomain || '',
+      email: sch.email || '',
+      phone: sch.phone || '',
+      address: sch.address,
+      maxStudents: sch.maxStudents || 350,
+      maxUsers: sch.maxUsers || 50,
+      schoolType: sch.schoolType || 'Negeri',
+    });
+    setShowEditSchoolModal(true);
+  };
+
+  // Save School Edits
+  const handleSaveSchool = () => {
+    if (!editingSchool) return;
+    if (!schoolForm.name?.trim()) {
+      toastError('Nama Sekolah Wajib', 'Nama sekolah tidak boleh kosong.');
+      return;
+    }
+    updateSchool(editingSchool.id, schoolForm);
+    setShowEditSchoolModal(false);
+    success('Data Sekolah Disimpan', `Informasi tenant ${schoolForm.name} berhasil diperbarui.`);
   };
 
   // Save Product
@@ -517,18 +559,78 @@ export const SaaSControllerView: React.FC = () => {
         {/* ========================================================================= */}
         {activeTab === 'schools' && (
           <div className="controller-schools-container animate-fade-in">
-            <div className="section-toolbar">
-              <div className="search-box">
-                <Search size={16} />
-                <input
-                  type="text"
-                  placeholder="Cari nama sekolah, NPSN, subdomain..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
+            <div className="section-toolbar" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flex: 1, minWidth: '280px' }}>
+                <div className="search-box" style={{ flex: 1 }}>
+                  <Search size={16} />
+                  <input
+                    type="text"
+                    placeholder="Cari nama sekolah, NPSN, subdomain..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
+
+                <select
+                  className="filter-select"
+                  value={schoolStatusFilter}
+                  onChange={(e) => setSchoolStatusFilter(e.target.value)}
+                >
+                  <option value="all">Semua Status</option>
+                  <option value="Aktif">Aktif</option>
+                  <option value="Trial">Trial</option>
+                  <option value="Suspended">Suspended</option>
+                  <option value="Nonaktif">Nonaktif</option>
+                </select>
+
+                <select
+                  className="filter-select"
+                  value={schoolLevelFilter}
+                  onChange={(e) => setSchoolLevelFilter(e.target.value)}
+                >
+                  <option value="all">Semua Jenjang</option>
+                  <option value="SD">SD</option>
+                  <option value="SMP">SMP</option>
+                  <option value="SMA">SMA</option>
+                  <option value="SMK">SMK</option>
+                  <option value="MA">MA</option>
+                  <option value="MTs">MTs</option>
+                  <option value="TK">TK/PAUD</option>
+                </select>
               </div>
 
-              <div className="toolbar-actions">
+              <div className="toolbar-actions" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <Button
+                  variant="outline"
+                  icon={<Download size={15} />}
+                  onClick={() => {
+                    const filtered = schools.filter((s) => {
+                      const matchSearch =
+                        s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                        s.npsn.includes(searchTerm) ||
+                        (s.subdomain || '').toLowerCase().includes(searchTerm.toLowerCase());
+                      const matchStatus = schoolStatusFilter === 'all' || s.status === schoolStatusFilter;
+                      const matchLevel = schoolLevelFilter === 'all' || s.level === schoolLevelFilter;
+                      return matchSearch && matchStatus && matchLevel;
+                    });
+                    const exportData = filtered.map((s) => ({
+                      ID: s.id,
+                      'Nama Sekolah': s.name,
+                      NPSN: s.npsn,
+                      Jenjang: s.level,
+                      Subdomain: s.subdomain ? `${s.subdomain}.educore.id` : '-',
+                      Paket: s.planName || 'Basic',
+                      Status: s.status,
+                      'Email Kontak': s.email || '-',
+                      Telepon: s.phone || '-',
+                      Alamat: s.address,
+                    }));
+                    exportToCSV(exportData, 'Daftar_Tenant_Sekolah_EduCore');
+                    success('Export Berhasil', 'Data tenant sekolah berhasil diekspor ke CSV.');
+                  }}
+                >
+                  Export CSV
+                </Button>
                 <Button
                   variant="primary"
                   icon={<Plus size={16} />}
@@ -555,11 +657,15 @@ export const SaaSControllerView: React.FC = () => {
                   </thead>
                   <tbody>
                     {schools
-                      .filter((s) =>
-                        s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                        s.npsn.includes(searchTerm) ||
-                        (s.subdomain || '').toLowerCase().includes(searchTerm.toLowerCase())
-                      )
+                      .filter((s) => {
+                        const matchSearch =
+                          s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          s.npsn.includes(searchTerm) ||
+                          (s.subdomain || '').toLowerCase().includes(searchTerm.toLowerCase());
+                        const matchStatus = schoolStatusFilter === 'all' || s.status === schoolStatusFilter;
+                        const matchLevel = schoolLevelFilter === 'all' || s.level === schoolLevelFilter;
+                        return matchSearch && matchStatus && matchLevel;
+                      })
                       .map((sch) => {
                         const schoolStudents = students.filter((st) => st.school_id === sch.id).length;
                         const maxStudents = sch.maxStudents || 350;
@@ -622,7 +728,7 @@ export const SaaSControllerView: React.FC = () => {
                               </div>
                             </td>
                             <td style={{ textAlign: 'right' }}>
-                              <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                              <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
                                 <button
                                   className="btn btn-outline btn-sm"
                                   title="Akses Langsung Tenant"
@@ -641,12 +747,34 @@ export const SaaSControllerView: React.FC = () => {
                                 >
                                   <Eye size={14} />
                                 </button>
+                                <button
+                                  className="btn btn-ghost btn-sm"
+                                  title="Edit Informasi Sekolah"
+                                  onClick={() => handleOpenEditSchool(sch)}
+                                >
+                                  <Edit2 size={14} />
+                                </button>
                                 {sch.status === 'Suspended' ? (
                                   <button
                                     className="btn btn-ghost btn-sm"
                                     title="Aktifkan Kembali"
                                     style={{ color: '#10b981' }}
-                                    onClick={() => activateTenant(sch.id)}
+                                    onClick={() => {
+                                      activateTenant(sch.id);
+                                      success('Tenant Diaktifkan', `Sekolah ${sch.name} telah diaktifkan kembali.`);
+                                    }}
+                                  >
+                                    <CheckCircle size={14} />
+                                  </button>
+                                ) : sch.status === 'Trial' ? (
+                                  <button
+                                    className="btn btn-ghost btn-sm"
+                                    title="Konfirmasi Aktivasi Penuh"
+                                    style={{ color: '#10b981' }}
+                                    onClick={() => {
+                                      activateTenant(sch.id);
+                                      success('Aktivasi Berhasil', `Sekolah ${sch.name} resmi berstatus Aktif.`);
+                                    }}
                                   >
                                     <CheckCircle size={14} />
                                   </button>
@@ -1305,16 +1433,28 @@ export const SaaSControllerView: React.FC = () => {
           title={`Detail Tenant: ${selectedSchool.name}`}
           size="lg"
           footer={
-            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
               <Button
                 variant="danger"
                 onClick={() => setShowDeleteSchoolConfirm(true)}
               >
                 Hapus Tenant Sekolah
               </Button>
-              <Button variant="outline" onClick={() => setShowSchoolDetailModal(false)}>
-                Tutup
-              </Button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <Button
+                  variant="outline"
+                  icon={<Edit2 size={14} />}
+                  onClick={() => {
+                    setShowSchoolDetailModal(false);
+                    handleOpenEditSchool(selectedSchool);
+                  }}
+                >
+                  Edit Data
+                </Button>
+                <Button variant="outline" onClick={() => setShowSchoolDetailModal(false)}>
+                  Tutup
+                </Button>
+              </div>
             </div>
           }
         >
@@ -1342,6 +1482,120 @@ export const SaaSControllerView: React.FC = () => {
             </div>
             <div className="full-width">
               <strong>Alamat:</strong> <div>{selectedSchool.address}</div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Edit School Modal */}
+      {editingSchool && (
+        <Modal
+          isOpen={showEditSchoolModal}
+          onClose={() => setShowEditSchoolModal(false)}
+          title={`Edit Informasi Tenant: ${editingSchool.name}`}
+          size="lg"
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setShowEditSchoolModal(false)}>
+                Batal
+              </Button>
+              <Button variant="primary" onClick={handleSaveSchool}>
+                Simpan Perubahan
+              </Button>
+            </>
+          }
+        >
+          <div className="form-grid-2">
+            <div className="form-group">
+              <label>Nama Sekolah *</label>
+              <input
+                type="text"
+                value={schoolForm.name || ''}
+                onChange={(e) => setSchoolForm((f) => ({ ...f, name: e.target.value }))}
+              />
+            </div>
+            <div className="form-group">
+              <label>NPSN (8 Digit) *</label>
+              <input
+                type="text"
+                maxLength={8}
+                value={schoolForm.npsn || ''}
+                onChange={(e) =>
+                  setSchoolForm((f) => ({ ...f, npsn: e.target.value.replace(/\D/g, '') }))
+                }
+              />
+            </div>
+            <div className="form-group">
+              <label>Jenjang Pendidikan</label>
+              <select
+                value={schoolForm.level || 'SMA'}
+                onChange={(e) => setSchoolForm((f) => ({ ...f, level: e.target.value as any }))}
+              >
+                <option value="SD">SD (Sekolah Dasar)</option>
+                <option value="SMP">SMP (Sekolah Menengah Pertama)</option>
+                <option value="SMA">SMA (Sekolah Menengah Atas)</option>
+                <option value="SMK">SMK (Sekolah Menengah Kejuruan)</option>
+                <option value="MA">MA (Madrasah Aliyah)</option>
+                <option value="MTs">MTs (Madrasah Tsanawiyah)</option>
+                <option value="TK">TK / PAUD</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Status Operasional Tenant</label>
+              <select
+                value={schoolForm.status || 'Aktif'}
+                onChange={(e) => setSchoolForm((f) => ({ ...f, status: e.target.value as any }))}
+              >
+                <option value="Aktif">Aktif</option>
+                <option value="Trial">Trial (Masa Uji Coba)</option>
+                <option value="Suspended">Suspended (Ditangguhkan)</option>
+                <option value="Nonaktif">Nonaktif</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Subdomain Sekolah (.educore.id)</label>
+              <input
+                type="text"
+                value={schoolForm.subdomain || ''}
+                onChange={(e) =>
+                  setSchoolForm((f) => ({
+                    ...f,
+                    subdomain: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''),
+                  }))
+                }
+              />
+            </div>
+            <div className="form-group">
+              <label>Batas Kuota Siswa</label>
+              <input
+                type="number"
+                value={schoolForm.maxStudents || 350}
+                onChange={(e) => setSchoolForm((f) => ({ ...f, maxStudents: Number(e.target.value) }))}
+              />
+            </div>
+            <div className="form-group">
+              <label>Email Kontak Resmi</label>
+              <input
+                type="email"
+                value={schoolForm.email || ''}
+                onChange={(e) => setSchoolForm((f) => ({ ...f, email: e.target.value }))}
+              />
+            </div>
+            <div className="form-group">
+              <label>Nomor Telepon / WhatsApp</label>
+              <input
+                type="text"
+                value={schoolForm.phone || ''}
+                onChange={(e) => setSchoolForm((f) => ({ ...f, phone: e.target.value }))}
+              />
+            </div>
+            <div className="form-group full-width">
+              <label>Alamat Sekolah</label>
+              <textarea
+                rows={2}
+                value={schoolForm.address || ''}
+                onChange={(e) => setSchoolForm((f) => ({ ...f, address: e.target.value }))}
+              />
             </div>
           </div>
         </Modal>
